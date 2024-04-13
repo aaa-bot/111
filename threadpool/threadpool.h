@@ -49,22 +49,27 @@ brief:
 template <typename T>
 threadpool<T>::threadpool( int actor_model, connection_pool *connPool, int thread_number, int max_requests) : m_actor_model(actor_model),m_thread_number(thread_number), m_max_requests(max_requests), m_threads(NULL),m_connPool(connPool)
 {
+    // 检查线程数量和最大请求数量是否合法
     if (thread_number <= 0 || max_requests <= 0)
         throw std::exception();
-    m_threads = new pthread_t[m_thread_number];//动态分配存储线程 ID 的内存空间
+    // 动态分配存储线程 ID 的内存空间
+    m_threads = new pthread_t[m_thread_number];
     if (!m_threads)//检查内存分配是否失败
         throw std::exception();
+    // 创建工作线程    
     for (int i = 0; i < thread_number; ++i)
     {
-        //函数创建了指定数量的工作线程，并将线程ID存储到m_threads数组中。每个工作线程会调用worker函数进行任务处理
-        //如果 pthread_create 返回非零值，则表示线程创建失败，此时代码会抛出 std::exception 异常，并删除已经创建的线程数组 m_threads
+        // 创建线程，每个线程调用 worker 函数进行任务处理
         if (pthread_create(m_threads + i, NULL, worker, this) != 0)
         {
+            // 如果线程创建失败，释放已经创建的线程数组内存
             delete[] m_threads;
             throw std::exception();
         }
-        if (pthread_detach(m_threads[i]))//pthread_detach 函数将线程设置为分离状态，以便在工作线程执行完毕后能够自动释放资源
+        // 将线程设置为分离状态，以便在工作线程执行完毕后能够自动释放资源
+        if (pthread_detach(m_threads[i]))
         {
+            // 如果设置线程分离状态失败，释放已经创建的线程数组内存
             delete[] m_threads;
             throw std::exception();
         }
@@ -145,18 +150,37 @@ void threadpool<T>::run()
         m_queuelocker.unlock();//释放任务队列锁
         if (!request)
             continue;
+
+
+        /*
+        并发模式：
+            当使用并发模式时，程序会针对每个 HTTP 请求创建一个新的任务，并将其放入线程池中处理。这意味着多个请求可以同时被处理，每个请求都有自己的线程负责处理。这种方式充分利用了多核处理器的并行性，可以提高系统的并发性能。
+            在并发模式下，每个请求都会拥有自己的数据库连接，因此数据库操作不会因为其他请求的阻塞而被延迟。这可以提高系统的响应速度和吞吐量。
+        不适用并发模式：
+            当不适用并发模式时，程序可能会使用单线程或者少量线程来处理所有的 HTTP 请求。这意味着所有的请求都会在同一个线程中按顺序处理，没有并行处理的能力。在这种情况下，如果有一个请求耗时较长，会阻塞其他请求的处理。
+            在不适用并发模式下，所有的请求可能会共享同一个数据库连接，因此如果有一个请求在执行数据库操作时阻塞了，其他请求可能也会受到影响，导致整个系统的响应速度变慢。
+        */
         if (1 == m_actor_model)//并发模式
         {
             if (0 == request->m_state)//读
             {
-                if (request->read_once())//一次性读取
+                //read_once()作用是从套接字读到读缓冲区
+                //返回 true，表示一次性读取数据成功，即从套接字中读取了数据到缓冲区中。
+                if (request->read_once())
                 {
                     request->improv = 1; //表明该任务被处理
                     //&request->mysql：http_conn对象的数据库成员指针  m_connPool：数据库连接池对象
+                    /*
+                        创建 connectionRAII 对象 mysqlcon，用于管理数据库连接。
+                        这里将 request->mysql（即 http_conn 对象的数据库成员指针）与数据库连接池对象 m_connPool 关联起来
+                        确保在离开作用域时释放数据库连接。
+                    */
                     connectionRAII mysqlcon(&request->mysql, m_connPool);
+                    //处理 HTTP 请求，可能会涉及数据库的读写操作。
                     request->process(); //调用http_conn的process函数进行向链接的数据库的读写操作
                 }
-                else//非一次性读取
+                //返回 false，表示一次性读取数据失败，即没有从套接字中读取到数据。
+                else
                 {
                     request->improv = 1;
                     request->timer_flag = 1;//需要设置定时器

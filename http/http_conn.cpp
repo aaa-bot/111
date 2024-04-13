@@ -19,17 +19,25 @@ map<string, string> users;
 
 void http_conn::initmysql_result(connection_pool *connPool)
 {
-    //先从连接池中取一个连接,相当于把客户端的http请求与数据库对应起来
+    // 从连接池中获取一个连接，这里使用了 RAII（Resource Acquisition Is Initialization）技术
     MYSQL *mysql = NULL;
     connectionRAII mysqlcon(&mysql, connPool);
 
     //在user表中检索username，passwd数据，浏览器端输入
+    /*
+        
+        int mysql_query(MYSQL *mysql, const char *query);
+        mysql 是一个指向已建立连接的 MySQL 对象的指针，用于指定要执行查询的连接。
+        query 是一个字符串，表示要执行的 SQL 查询语句。
+        该函数返回一个整数值，表示执行查询的结果。如果查询执行成功，则返回0；如果查询执行失败，则返回非0值，通常为一个错误代码。
+    */
     if (mysql_query(mysql, "SELECT username,passwd FROM user"))
     {
+        // 如果执行 SQL 查询出错，记录错误日志
         LOG_ERROR("SELECT error:%s\n", mysql_error(mysql));
     }
 
-    //从表中检索完整的结果集
+    // 将查询结果存储到 MYSQL_RES 结构体中
     MYSQL_RES *result = mysql_store_result(mysql);
 
     //返回结果集中的列数
@@ -84,6 +92,14 @@ void removefd(int epollfd, int fd)
 }
 
 //将事件重置为EPOLLONESHOT，修改事件属性，需要把要修改的套接字及其事件作为参数传进来
+/*
+    这段代码是用于修改 epoll 事件的函数。具体作用如下：
+
+    参数 epollfd 是 epoll 描述符，用于标识 epoll 实例。
+    参数 fd 是需要修改事件的文件描述符。
+    参数 ev 是新的事件类型，包括读、写、异常等。
+    参数 TRIGMode 是触发模式，如果为 1，表示使用边缘触发模式，否则为水平触发模式。
+*/
 void modfd(int epollfd, int fd, int ev, int TRIGMode)
 {
     epoll_event event;
@@ -210,11 +226,11 @@ http_conn::LINE_STATUS http_conn::parse_line()
     return LINE_OPEN;
 }
 
-//循环读取客户数据，直到无数据可读或对方关闭连接
-//非阻塞ET工作模式下，需要一次性将数据读完
+//用于从套接字中读取数据到读缓冲区中。
 bool http_conn::read_once()
 {
-    if (m_read_idx >= READ_BUFFER_SIZE)//检查读缓冲区是否已满，如果已满则无法继续读取
+    // 检查读缓冲区是否已满，如果已满则无法继续读取
+    if (m_read_idx >= READ_BUFFER_SIZE)
     {
         return false;
     }
@@ -224,6 +240,7 @@ bool http_conn::read_once()
     if (0 == m_TRIGMode)
     {
         //从套接字中读取数据，READ_BUFFER_SIZE - m_read_idx 为读取的数据大小
+        //使用了 recv 函数从套接字 m_sockfd 中读取数据，并将读取的数据存储到 m_read_buf 缓冲区中。
         bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
         m_read_idx += bytes_read;//更新读取位置
 
@@ -243,12 +260,14 @@ bool http_conn::read_once()
             bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
             if (bytes_read == -1)
             {
+                // 如果 errno 是 EAGAIN 或者 EWOULDBLOCK，则表示读取到末尾或者暂时无数据可读，跳出循环
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                     break;
                 return false;
             }
             else if (bytes_read == 0)
             {
+                // 如果返回值为 0，则表示对端关闭了连接，跳出循环
                 return false;
             }
             m_read_idx += bytes_read;
@@ -266,31 +285,36 @@ POST：暗文传输，安全。数据量没有限制。
 /test/test.html为URI，统一资源标识符
 HTTP/1.1为协议版本
 */
-
+// 这个函数是用来解析 HTTP 请求行的
 http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
 {
     //m_url  /index.html
+    // 在请求行中找到第一个出现空格或制表符的位置，将其作为 URL 的起始位置
     m_url = strpbrk(text, " \t");  //strpbrk()函数在请求行中找到第一个出现空格或制表符的位置，将其作为URL的起始位置 m_url
+    // 如果没有找到空格或制表符，返回 BAD_REQUEST 错误
     if (!m_url)
     {
         return BAD_REQUEST;
     }
+    // 将 URL 的起始位置设置为字符串结束符 '\0'，并将指针移动到 URL 的实际内容
     *m_url++ = '\0';
 
-    //用比较字符串函数来判断请求方法
+     // 提取请求方法并进行比较，判断是 GET 还是 POST
     char *method = text;
     if (strcasecmp(method, "GET") == 0)
         m_method = GET;
     else if (strcasecmp(method, "POST") == 0)
     {
         m_method = POST;
+        // 如果是 POST 方法，设置标志位 cgi 为 1，表示需要处理 CGI 请求
         cgi = 1;
     }
     else
         return BAD_REQUEST;
 
+    // 跳过 URL 中的空格或制表符，将指针移动到 URL 的实际内容
     m_url += strspn(m_url, " \t");//strspn() 函数跳过 URL 中的空格或制表符
-
+    // 在 URL 中找到第一个出现空格或制表符的位置，将其作为 HTTP 版本的起始位置
     m_version = strpbrk(m_url, " \t");
     if (!m_version)
         return BAD_REQUEST;
@@ -298,8 +322,10 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
     //用字符串比较函数获取http版本
     *m_version++ = '\0';
     m_version += strspn(m_version, " \t");
+    // 检查 HTTP 版本是否为 "HTTP/1.1"，如果不是则返回 BAD_REQUEST 错误
     if (strcasecmp(m_version, "HTTP/1.1") != 0)
         return BAD_REQUEST;
+    // 检查 URL 是否以 "http://" 或 "https://" 开头，如果是，则将指针移动到路径部分
     if (strncasecmp(m_url, "http://", 7) == 0)
     {
         m_url += 7;
@@ -320,6 +346,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
 
     //设置解析状态为CHECK_STATE_HEADER，表示请求行解析完毕，需要进一步解析HTTP头部
     m_check_state = CHECK_STATE_HEADER;
+    // 返回 NO_REQUEST，表示解析请求行成功
     return NO_REQUEST;
 }
 
@@ -378,6 +405,12 @@ http_conn::HTTP_CODE http_conn::parse_headers(char *text)
 }
 
 //判断http请求是否被完整读入
+/*
+    这个函数是用来解析 HTTP 请求消息体的内容的。
+    在 HTTP 协议中，如果是 POST 请求，请求消息体中通常会包含客户端发送的数据，比如表单提交时用户填写的信息。
+    这个函数的作用是判断是否已经接收到了完整的请求消息体，并将消息体内容保存到 m_string 成员变量中。
+
+*/
 http_conn::HTTP_CODE http_conn::parse_content(char *text)
 {
     if (m_read_idx >= (m_content_length + m_checked_idx))
@@ -408,6 +441,7 @@ http_conn::HTTP_CODE http_conn::process_read()
         {
         case CHECK_STATE_REQUESTLINE://解析请求行
         {
+            //具体解析http请求行的函数
             ret = parse_request_line(text);
             if (ret == BAD_REQUEST)
                 return BAD_REQUEST;
@@ -415,6 +449,7 @@ http_conn::HTTP_CODE http_conn::process_read()
         }
         case CHECK_STATE_HEADER:
         {
+            //具体解析请求头部的函数
             ret = parse_headers(text);//解析请求头部
             if (ret == BAD_REQUEST)
                 return BAD_REQUEST;
@@ -426,6 +461,7 @@ http_conn::HTTP_CODE http_conn::process_read()
         }
         case CHECK_STATE_CONTENT://解析消息体
         {
+            //具体解析消息体的函数
             ret = parse_content(text);
             if (ret == GET_REQUEST)
                 return do_request();
@@ -605,40 +641,42 @@ bool http_conn::write()
 {
     int temp = 0;
 
-    if (bytes_to_send == 0)//不再需要发送
+    // 如果没有待发送的数据
+    if (bytes_to_send == 0)
     {
         modfd(m_epollfd, m_sockfd, EPOLLIN, m_TRIGMode);//修改文件描述符的事件类型为 EPOLLIN，即监听读事件
         init();//重置HTTP连接对象
-        return true;
+        return true;// 返回 true 表示写入成功
     }
 
+    // 进入循环，持续写入数据
     while (1)
     {
         temp = writev(m_sockfd, m_iv, m_iv_count);//将数据从多个缓冲区中写入到套接字中
 
-        if (temp < 0)
+        if (temp < 0)//如果写入失败
         {
             if (errno == EAGAIN)//表示当前套接字的发送缓冲区已满，无法立即发送数据，需要等待下一次写事件的触发，以便继续发送剩余的数据
             {
                 modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);//表示当前套接字不可写，这时候调用 modfd 函数修改文件描述符的事件类型为 EPOLLOUT，即监听写事件
-                return true;
+                return true;// 返回 true 表示等待下次写事件触发后继续写入
             }
             unmap();//解映射
-            return false;
+            return false;// 返回 false 表示写入失败
         }
 
-        bytes_have_send += temp;
-        bytes_to_send -= temp;
-        if (bytes_have_send >= m_iv[0].iov_len)
+        bytes_have_send += temp;// 更新已发送字节数
+        bytes_to_send -= temp;// 更新待发送字节数
+        if (bytes_have_send >= m_iv[0].iov_len)// 如果已发送字节数大于等于当前缓冲区的长度
         {
-            m_iv[0].iov_len = 0;
-            m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);
-            m_iv[1].iov_len = bytes_to_send;
+            m_iv[0].iov_len = 0;// 将当前缓冲区长度置零
+            m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);//更新第二个缓冲区的起始位置
+            m_iv[1].iov_len = bytes_to_send;// 更新第二个缓冲区的长度
         }
         else
         {
-            m_iv[0].iov_base = m_write_buf + bytes_have_send;
-            m_iv[0].iov_len = m_iv[0].iov_len - bytes_have_send;
+            m_iv[0].iov_base = m_write_buf + bytes_have_send;//更新当前缓冲区的起始位置
+            m_iv[0].iov_len = m_iv[0].iov_len - bytes_have_send;//更新当前缓冲区的长度
         }
 
         if (bytes_to_send <= 0)//全部发送完毕
@@ -717,29 +755,31 @@ bool http_conn::add_content(const char *content)
     return add_response("%s", content);
 }
 
-//与http_conn::HTTP_CODE http_conn::process_read()相类似，此方法是处理写操作
+//用于根据不同的 HTTP 返回码（HTTP_CODE ret）生成对应的 HTTP 响应
 bool http_conn::process_write(HTTP_CODE ret)
 {
     //根据HTTP_CODE调用不同的添加内容的函数（add_）进行数据写入
     switch (ret)
     {
-    case INTERNAL_ERROR:
+    case INTERNAL_ERROR:// 服务器内部错误
     {
+        // 添加状态行、头部和内容
         add_status_line(500, error_500_title);
         add_headers(strlen(error_500_form));
         if (!add_content(error_500_form))
             return false;
         break;
     }
-    case BAD_REQUEST:
+    case BAD_REQUEST:// 客户端请求错误
     {
+        // 添加状态行、头部和内容
         add_status_line(404, error_404_title);
         add_headers(strlen(error_404_form));
         if (!add_content(error_404_form))
             return false;
         break;
     }
-    case FORBIDDEN_REQUEST:
+    case FORBIDDEN_REQUEST:// 客户端请求被禁止
     {
         add_status_line(403, error_403_title);
         add_headers(strlen(error_403_form));
@@ -747,25 +787,26 @@ bool http_conn::process_write(HTTP_CODE ret)
             return false;
         break;
     }
-    case FILE_REQUEST:
+    case FILE_REQUEST:// 请求文件
     {
-        add_status_line(200, ok_200_title);
-        if (m_file_stat.st_size != 0)
+        add_status_line(200, ok_200_title);// 添加状态行
+        if (m_file_stat.st_size != 0)// 如果文件大小不为0
         {
-            add_headers(m_file_stat.st_size);
-            m_iv[0].iov_base = m_write_buf;
+            add_headers(m_file_stat.st_size);// 添加头部
+            // 设置 IO 向量（m_iv），用于描述待发送数据的位置和长度
+            m_iv[0].iov_base = m_write_buf;// 第一个元素设置为写缓冲区的位置和长度
             m_iv[0].iov_len = m_write_idx;
-            m_iv[1].iov_base = m_file_address;
+            m_iv[1].iov_base = m_file_address; // 第二个元素设置为文件内容的位置和长度
             m_iv[1].iov_len = m_file_stat.st_size;
-            m_iv_count = 2;
-            bytes_to_send = m_write_idx + m_file_stat.st_size;
-            return true;
+            m_iv_count = 2;// IO 向量的数量
+            bytes_to_send = m_write_idx + m_file_stat.st_size; // 待发送的字节数
+            return true;// 返回 true 表示可以继续发送数据
         }
-        else
+        else // 如果文件大小为0
         {
-            const char *ok_string = "<html><body></body></html>";
-            add_headers(strlen(ok_string));
-            if (!add_content(ok_string))
+            const char *ok_string = "<html><body></body></html>";// 空文件内容
+            add_headers(strlen(ok_string));//添加头部
+            if (!add_content(ok_string))//添加内容
                 return false;
         }
     }
@@ -791,20 +832,26 @@ bool http_conn::process_write(HTTP_CODE ret)
     return true;
 }
 
-//处理函数，根据http码判断读写操作，进而调用process_read或者process_write函数
+//处理HTTP请求，根据http码判断读写操作，进而调用process_read或者process_write函数
 void http_conn::process()
 {
+    // 调用 process_read 函数处理读取请求的逻辑
     HTTP_CODE read_ret = process_read();
+    // 如果读取请求返回 NO_REQUEST，表示没有完整的 HTTP 请求，需要继续等待数据到达
     if (read_ret == NO_REQUEST)
     {
+        // 将套接字注册到 epoll 实例中，监听 EPOLLIN 事件，以便下次继续读取数据
         modfd(m_epollfd, m_sockfd, EPOLLIN, m_TRIGMode);
         return;
     }
+    // 调用 process_write 函数处理写入响应的逻辑
     bool write_ret = process_write(read_ret);
+    // 如果写入响应失败，则关闭连接
     if (!write_ret)
     {
         close_conn();
     }
+    // 将套接字注册到 epoll 实例中，监听 EPOLLOUT 事件，以便下次继续写入响应
     modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);
 }
 

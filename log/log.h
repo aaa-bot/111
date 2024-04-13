@@ -13,7 +13,10 @@ using namespace std;
 class Log
 {
 public:
-    //C++11以后,使用局部变量懒汉不用加锁
+    /* 
+    这段代码实现了一个单例模式，确保 Log 类的实例在程序运行期间只有一个。
+    每次调用 get_instance 函数时，它都会返回相同的 Log 对象的指针，而不会创建新的实例。
+    */
     static Log *get_instance()
     {
         static Log instance;

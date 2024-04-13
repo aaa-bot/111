@@ -8,8 +8,8 @@ using namespace std;
 
 Log::Log()
 {
-    m_count = 0;
-    m_is_async = false;
+    m_count = 0;//日志行数记录
+    m_is_async = false;//是否同步设置位
 }
 
 Log::~Log()
@@ -36,6 +36,7 @@ bool Log::init(const char *file_name, int close_log, int log_buf_size, int split
     m_close_log = close_log;
     m_log_buf_size = log_buf_size;
     m_buf = new char[m_log_buf_size];//缓冲区
+    // 使用 memset 将日志缓冲区的内容初始化为 '\0'，即全零，以确保日志缓冲区的初始状态是空的
     memset(m_buf, '\0', m_log_buf_size);
     m_split_lines = split_lines;
 
@@ -43,18 +44,23 @@ bool Log::init(const char *file_name, int close_log, int log_buf_size, int split
     struct tm *sys_tm = localtime(&t);
     struct tm my_tm = *sys_tm;
 
- 
+    // 从文件路径中获取最后一个 '/' 字符后的字符串，即获取文件名部分
     const char *p = strrchr(file_name, '/');//指定日志文件名称
+    // 初始化一个长度为 256 的字符数组，用于存储完整的日志文件名
     char log_full_name[256] = {0};
 
     if (p == NULL)//日志文件名称为空则自动创建
     {
+        // 构建日志文件名，格式为 "年_月_日_文件名"
         snprintf(log_full_name, 255, "%d_%02d_%02d_%s", my_tm.tm_year + 1900, my_tm.tm_mon + 1, my_tm.tm_mday, file_name);
     }
     else
     {
+        // 提取文件名部分，并存储到 log_name 数组中
         strcpy(log_name, p + 1);
+        // 提取路径部分，并存储到 dir_name 数组中
         strncpy(dir_name, file_name, p - file_name + 1);
+        // 构建完整的日志文件名，格式为 "路径/年_月_日_文件名"
         snprintf(log_full_name, 255, "%s%d_%02d_%02d_%s", dir_name, my_tm.tm_year + 1900, my_tm.tm_mon + 1, my_tm.tm_mday, log_name);
     }
 

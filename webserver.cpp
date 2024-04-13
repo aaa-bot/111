@@ -32,17 +32,17 @@ WebServer::~WebServer()
 void WebServer::init(int port, string user, string passWord, string databaseName, int log_write, 
                      int opt_linger, int trigmode, int sql_num, int thread_num, int close_log, int actor_model)
 {
-    m_port = port;
-    m_user = user;
-    m_passWord = passWord;
-    m_databaseName = databaseName;
-    m_sql_num = sql_num;
-    m_thread_num = thread_num;
-    m_log_write = log_write;
-    m_OPT_LINGER = opt_linger;
-    m_TRIGMode = trigmode;
-    m_close_log = close_log;
-    m_actormodel = actor_model;
+    m_port = port;//端口号
+    m_user = user;//用户名
+    m_passWord = passWord;//密码
+    m_databaseName = databaseName;//数据库名字
+    m_sql_num = sql_num;//数据库连接池数量
+    m_thread_num = thread_num;//线程池数量
+    m_log_write = log_write;//日志写入方式，0默认同步
+    m_OPT_LINGER = opt_linger;//优雅关闭连接，0默认不使用
+    m_TRIGMode = trigmode;//listenfd和connfd的模式组合，0默认使用LT + LT
+    m_close_log = close_log;//关闭日志，0默认不关闭
+    m_actormodel = actor_model;//并发模式，0默认proactor
 }
 
 void WebServer::trig_mode()
@@ -79,6 +79,7 @@ void WebServer::log_write()
     {
         //初始化日志，日志使用单例模式，Log::get_instance()拿到唯一的日志对象并进行初始化
         if (1 == m_log_write)
+            //异步包括初始化一个阻塞队列，并创建日志文件并打开
             Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800);//异步写入
         else
             Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0);//同步写入
@@ -87,21 +88,20 @@ void WebServer::log_write()
 
 void WebServer::sql_pool()
 {
-    //初始化数据库连接池,同样数据库连接池也为单例，拿到之后进行初始化
-    //也就是把连接池与数据库连接起来，在连接池中的 客户端与服务器之间的连接 都使用这个数据
+    // 初始化数据库连接池，获取 connection_pool 的单例实例
     m_connPool = connection_pool::GetInstance();
+    // 初始化数据库连接池，传入连接信息和其他参数，分配一定数量的连接
     m_connPool->init("localhost", m_user, m_passWord, m_databaseName, 3306, m_sql_num, m_close_log);
 
-    //初始化数据库读取表，把数据库的连接信息塞给用户，用户读取数据库连接池的信息连接数据库
-    //用户被创建时，读取连接池中的数据库连接，并用该连接初始化mysql_result对象，即连接数据库
+    // 使用数据库连接池中的连接执行数据库查询，初始化用户信息，记录用户名密码对应关系
     users->initmysql_result(m_connPool);
 }
 
 void WebServer::thread_pool()
 {
-    //线程池是一个模板类，创建类型为http_conn（可以理解为用户，即要连接数据库的对象）
+    //threadpool<http_conn>: 这是一个模板类，用于创建一个线程池，模板参数 http_conn 可能指定了线程池中任务的类型。
     //m_actormodel：并发模型选择
-    //m_connPool：连接池对象，用于管理和复用客户端与服务器之间的连接。
+    //m_connPool：这是一个指向数据库连接池的指针，用于线程池中的任务需要访问数据库时获取数据库连接。
     //m_thread_num：线程池中的线程数。
     m_pool = new threadpool<http_conn>(m_actormodel, m_connPool, m_thread_num);
 }
@@ -267,9 +267,9 @@ void WebServer::deal_timer(util_timer *timer, int sockfd)
 //处理客户端数据，在没有数据到达时，该函数会一直阻塞等待客户端连接
 bool WebServer::dealclientdata()
 {
-    struct sockaddr_in client_address;
-    socklen_t client_addrlength = sizeof(client_address);
-    if (0 == m_LISTENTrigmode)//m_LISTENTrigmode是在trig_mode函数中设置的连接模式
+    struct sockaddr_in client_address;//用于存储客户端的 IPv4 地址信息
+    socklen_t client_addrlength = sizeof(client_address);//计算大小
+    if (0 == m_LISTENTrigmode)//m_LISTENTrigmode是监听socket的触发模式，0表示LT模式
     {
         //接受客户端的连接，传入参数m_listenfd作为“监听套接字”，与bind相对应，accept会创建一个新的套接字（“连接套接字”）在服务器端使用
         int connfd = accept(m_listenfd, (struct sockaddr *)&client_address, &client_addrlength);
@@ -458,18 +458,20 @@ void WebServer::dealwithwrite(int sockfd)
 //循环读取时间的函数，是服务器处理客户端连接请求和数据的主函数
 void WebServer::eventLoop()
 {
-    bool timeout = false;
-    bool stop_server = false;
+    bool timeout = false;//是否超时
+    bool stop_server = false;//是否停止服务器
 
     while (!stop_server)//只要服务器没停，就持续处理监听器中监听到的事件
     {
+        // 调用 epoll_wait 函数等待事件就绪
         int number = epoll_wait(m_epollfd, events, MAX_EVENT_NUMBER, -1);
+        // epoll_wait 返回值小于 0，且错误码不是中断错误 EINTR
         if (number < 0 && errno != EINTR)
         {
             LOG_ERROR("%s", "epoll failure");
             break;
         }
-
+        //遍历处理就绪事件
         for (int i = 0; i < number; i++)
         {
             int sockfd = events[i].data.fd;
@@ -477,6 +479,7 @@ void WebServer::eventLoop()
             //如果处理新到的客户连接
             if (sockfd == m_listenfd)
             {
+                //处理新连接
                 bool flag = dealclientdata();//监听到了新用户，用accept函数接受连接
                 if (false == flag)
                     continue;

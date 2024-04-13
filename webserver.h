@@ -46,11 +46,11 @@ public:
 
 public:
     //基础，定义了一些服务器信息的对象，与配置文件类似，通过配置文件对象的信息来初始化服务器信息
-    int m_port;
+    int m_port;//端口号
     char *m_root;// 网站根目录
-    int m_log_write;
-    int m_close_log;
-    int m_actormodel;
+    int m_log_write;//日志写入方式，0默认同步
+    int m_close_log;//关闭日志，0默认不关闭
+    int m_actormodel;//并发模式，默认proactor
 
     int m_pipefd[2];// 父进程和子进程间通信的管道描述符
     /*
@@ -63,25 +63,31 @@ public:
     */
     
     int m_epollfd;// epoll句柄
-    http_conn *users;
+    http_conn *users;//用户
 
     //数据库相关
     connection_pool *m_connPool;
     string m_user;         //登陆数据库用户名
     string m_passWord;     //登陆数据库密码
     string m_databaseName; //使用数据库名
-    int m_sql_num;
+    int m_sql_num;//数据库连接池数量，默认8
 
     //线程池相关
     threadpool<http_conn> *m_pool;
-    int m_thread_num;
+    int m_thread_num;//线程池内线程数量，默认8
 
     //epoll_event相关
     epoll_event events[MAX_EVENT_NUMBER];// 用于存储epoll_wait返回的事件的数组
 
     int m_listenfd;
-    int m_OPT_LINGER;
-    int m_TRIGMode;
+    int m_OPT_LINGER;//优雅关闭连接，0默认不使用
+    /*listenfd和connfd的模式组合，默认使用LT + LT
+	    0，表示使用LT + LT
+	    1，表示使用LT + ET
+        2，表示使用ET + LT
+        3，表示使用ET + ET
+    */
+    int m_TRIGMode;//默认组合模式
     int m_LISTENTrigmode;// 监听socket的触发模式
     int m_CONNTrigmode;// 连接socket的触发模式
 

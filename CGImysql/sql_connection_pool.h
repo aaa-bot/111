@@ -47,12 +47,13 @@ public:
 };
 
 
-//用于管理MySQL数据库连接，采用资源获取即初始化（RAII）的方式进行自动化管理
-//可以理解为与真正的数据库对应起来
+//这段代码定义了一个 connectionRAII 类，它用于管理 MySQL 连接资源的获取和释放。
 class connectionRAII{
 
 public:
+	// 构造函数，用于获取 MySQL 连接资源
 	connectionRAII(MYSQL **con, connection_pool *connPool);
+	// 析构函数，用于释放 MySQL 连接资源
 	~connectionRAII();
 	
 private:

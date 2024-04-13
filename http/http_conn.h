@@ -46,9 +46,9 @@ public:
     };
     enum CHECK_STATE//标识当前解析请求行和请求头的状态
     {
-        CHECK_STATE_REQUESTLINE = 0,
-        CHECK_STATE_HEADER,
-        CHECK_STATE_CONTENT
+        CHECK_STATE_REQUESTLINE = 0,//解析请求行
+        CHECK_STATE_HEADER,//解析请求头部
+        CHECK_STATE_CONTENT//解析消息体
     };
     enum HTTP_CODE//表示处理HTTP请求的结果代码
     {

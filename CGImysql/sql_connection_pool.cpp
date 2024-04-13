@@ -12,10 +12,10 @@ using namespace std;
 
 connection_pool::connection_pool()
 {
-	m_CurConn = 0;
-	m_FreeConn = 0;
+	m_CurConn = 0;//当前已使用的连接数
+	m_FreeConn = 0;//当前空闲的连接数
 }
-
+//实现单例模式
 connection_pool *connection_pool::GetInstance()
 {
 	static connection_pool connPool;
